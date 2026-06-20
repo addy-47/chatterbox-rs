@@ -16,6 +16,7 @@ fn has_cuda() -> bool {
 fn main() {
     let mut config = cmake::Config::new("codec.cpp");
     config.define("BUILD_SHARED_LIBS", "OFF");
+    config.define("CMAKE_POSITION_INDEPENDENT_CODE", "ON");
     config.profile("Release");
 
     let use_cuda = has_cuda();
