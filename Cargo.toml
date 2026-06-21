@@ -14,8 +14,11 @@ futures-util = "0.3"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 hf-hub = "0.3.2"
-llama-cpp-4 = { version = "0.2.61", default-features = false, features = ["openmp", "mtmd"] }
+llama-cpp-4 = { version = "0.2.61", default-features = false, features = ["openmp", "mtmd", "cuda"] }
+llama-cpp-sys-4 = "0.2.61"
 tokenizers = { version = "0.19", default-features = false, features = ["onig"] }
+
+
 base64 = "0.22"
 hound = "3.5"
 
