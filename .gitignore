@@ -1,1 +1,8 @@
 /target
+Cargo.lock
+chatterbox-cpp/build/
+chatterbox-cpp/build_cuda/
+*.o
+*.a
+*.so
+bench_audio/rust_*.wav
