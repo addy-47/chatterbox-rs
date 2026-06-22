@@ -44,6 +44,8 @@ fn main() {
 
     // Disable CUDA graphs (llama-only feature, not needed).
     cmake_cfg.define("GGML_CUDA_GRAPHS", "OFF");
+    // Disable OpenMP to prevent linker errors and runtime thread contention with Vox's OpenMP runtime.
+    cmake_cfg.define("GGML_OPENMP", "OFF");
 
     let dst = cmake_cfg.build();
 

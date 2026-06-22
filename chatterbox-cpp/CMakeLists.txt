@@ -11,7 +11,9 @@ if (NOT TARGET ggml)
     add_subdirectory(ggml)
 endif()
 
-find_package(OpenMP)
+if (GGML_OPENMP)
+    find_package(OpenMP)
+endif()
 
 set(TTS_CPP_LIB_SOURCES
     src/main.cpp
@@ -46,7 +48,7 @@ if (TTS_CPP_BUILD_LIBRARY)
     target_link_libraries(tts-cpp PUBLIC ggml)
     target_link_libraries(tts-cpp PRIVATE mtl_tokenizer)
 
-    if (OpenMP_CXX_FOUND)
+    if (GGML_OPENMP AND OpenMP_CXX_FOUND)
         target_link_libraries(tts-cpp PRIVATE OpenMP::OpenMP_CXX)
     endif()
 
