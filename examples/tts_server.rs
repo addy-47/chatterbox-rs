@@ -17,6 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut port = 7860u16;
     let mut gpu_layers = 99i32;
     let mut cfm_steps = 10i32;
+    let mut stream_chunk_tokens = 1i32;
     let mut language = "en".to_string();
     let mut bind_addr = None;
 
@@ -63,6 +64,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return Err("Missing value for --cfm-steps".into());
                 }
             }
+            "--stream-chunk-tokens" => {
+                if i + 1 < args.len() {
+                    stream_chunk_tokens = args[i + 1].parse()?;
+                    i += 2;
+                } else {
+                    return Err("Missing value for --stream-chunk-tokens".into());
+                }
+            }
             "--language" => {
                 if i + 1 < args.len() {
                     language = args[i + 1].clone();
@@ -82,13 +91,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             h if h == "--help" || h == "-h" => {
                 println!("Usage: tts_server [OPTIONS]");
                 println!("Options:");
-                println!("  --t3-gguf <PATH>       Path to T3 GGUF model");
-                println!("  --s3gen-gguf <PATH>    Path to S3Gen GGUF model");
-                println!("  --port <PORT>          Port to listen on (default: 7860)");
-                println!("  --bind <ADDR>          Bind address (e.g. 0.0.0.0:7860, overrides --port)");
-                println!("  --gpu-layers <NUM>     Number of GPU layers (default: 99)");
-                println!("  --cfm-steps <NUM>      CFM steps (default: 10)");
-                println!("  --language <LANG>      Default language (default: en)");
+                println!("  --t3-gguf <PATH>             Path to T3 GGUF model");
+                println!("  --s3gen-gguf <PATH>          Path to S3Gen GGUF model");
+                println!("  --port <PORT>                Port to listen on (default: 7860)");
+                println!("  --bind <ADDR>                Bind address (e.g. 0.0.0.0:7860, overrides --port)");
+                println!("  --gpu-layers <NUM>           Number of GPU layers (default: 99)");
+                println!("  --cfm-steps <NUM>            CFM steps (default: 10)");
+                println!("  --stream-chunk-tokens <NUM>  Tokens per chunk (default: 1)");
+                println!("  --language <LANG>            Default language (default: en)");
                 return Ok(());
             }
             _ => {
@@ -108,6 +118,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             n_gpu_layers: gpu_layers,
             cfm_steps,
             stream_cfm_steps: cfm_steps,
+            stream_chunk_tokens,
             ..Default::default()
         },
     };
