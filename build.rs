@@ -127,10 +127,7 @@ fn main() {
         println!("cargo:rustc-link-lib=dylib=cuda");
     }
 
-    // System libraries required by GGML and tts-cpp.
-    println!("cargo:rustc-link-lib=dylib=stdc++");
-    // OpenMP — ggml-cpu uses it.
-    println!("cargo:rustc-link-lib=dylib=gomp");
+    // System libraries required by GGML and tts-cpp will be resolved by the top-level target/linker.
 
     // Rerun if the C bridge or any chatterbox-cpp source changes.
     println!("cargo:rerun-if-changed=c_src/tts_bridge.cpp");
