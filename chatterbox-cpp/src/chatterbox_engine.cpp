@@ -127,12 +127,12 @@ struct Engine::Impl {
 
     ~Impl() {
         wait_for_preload(s3gen_preload_thread);
-        // Release the S3Gen cache (which holds its own backend + buffers)
-        // BEFORE freeing the T3 backend.  If we don't, the cache's
-        // backend resources get torn down by static destructors at
-        // process exit, after ggml-metal's global device has already
-        // been finalised, tripping its "rsets count == 0" assertion.
-        s3gen_unload();
+        // Do NOT call s3gen_unload() here — the S3Gen cache is a process-wide
+        // global and may be in use by other Engine instances on other threads
+        // (e.g. when the test harness runs tests in parallel).  The cache is
+        // automatically released at process exit via the atexit handler
+        // installed in s3gen_model_cache_get().  This mirrors how the
+        // original chatterbox-cli manages the cache lifetime.
         if (allocr) {
             ggml_gallocr_free(allocr);
             allocr = nullptr;

@@ -29,7 +29,9 @@ fn main() {
         .define("TTS_CPP_INSTALL", "OFF")
         .profile("Release");
 
-    let use_cuda = has_cuda();
+    // CUDA is only compiled when the "cuda" feature is active AND nvcc is found.
+    let cuda_feature = std::env::var("CARGO_FEATURE_CUDA").is_ok();
+    let use_cuda = cuda_feature && has_cuda();
     if use_cuda {
         println!("cargo:warning=CUDA detected, building chatterbox-cpp with GPU support");
         cmake_cfg
@@ -130,7 +132,10 @@ fn main() {
     // OpenMP — ggml-cpu uses it.
     println!("cargo:rustc-link-lib=dylib=gomp");
 
-    // Rerun if the C bridge changes.
+    // Rerun if the C bridge or any chatterbox-cpp source changes.
     println!("cargo:rerun-if-changed=c_src/tts_bridge.cpp");
     println!("cargo:rerun-if-changed=c_src/tts_bridge.h");
+    println!("cargo:rerun-if-changed={}", chatterbox_dir.join("src").display());
+    println!("cargo:rerun-if-changed={}", chatterbox_dir.join("include").display());
+    println!("cargo:rerun-if-changed={}", chatterbox_dir.join("ggml/include").display());
 }

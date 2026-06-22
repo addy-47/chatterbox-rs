@@ -4,9 +4,23 @@ use std::ffi::{CStr, CString};
 use std::marker::PhantomData;
 use std::path::Path;
 use std::ptr;
+use std::sync::Mutex;
 
 
 use crate::error::EngineError;
+
+/// Global mutex that serialises all `Engine` operations.
+///
+/// The underlying C++ code uses a process-wide S3Gen model cache
+/// (`g_s3gen_cache_entry`) whose `model_ctx` (backends, tensors, buffers)
+/// is **not** safe to access concurrently from multiple threads.
+/// Within a single process, only one Engine `new()` / `synthesize()` /
+/// `drop()` may be active at any moment.
+///
+/// This matches the single-Engine design of the original chatterbox-cli.
+/// Applications that need multiple simultaneous Engines must provide
+/// their own co-ordination (or use `--test-threads=1` in test harnesses).
+static ENGINE_INIT_MUTEX: Mutex<()> = Mutex::new(());
 use crate::ffi::{
     self, tts_bridge_engine, tts_bridge_engine_options, tts_bridge_synthesis_result,
 };
@@ -277,6 +291,9 @@ impl Engine {
     /// be found or loaded, the GGUF variant is MTL and `language` is
     /// empty, or any other initialisation error occurs.
     pub fn new(options: EngineOptions) -> Result<Self, EngineError> {
+        // Serialize Engine creation — C++ global state is not thread-safe.
+        let _guard = ENGINE_INIT_MUTEX.lock().unwrap();
+
         // Validate paths early.
         if options.t3_gguf_path.is_empty() {
             return Err(EngineError::LoadFailed("t3_gguf_path is required".into()));
@@ -328,6 +345,9 @@ impl Engine {
     /// Returns an error if the text is empty, synthesis is cancelled, or
     /// any model-level error occurs.
     pub fn synthesize(&self, text: &str) -> Result<SynthesisResult, EngineError> {
+        // Serialize synthesis — the C++ S3Gen cache is process-wide and
+        // not safe for concurrent inference.
+        let _guard = ENGINE_INIT_MUTEX.lock().unwrap();
         let c_text = CString::new(text.as_bytes())
             .map_err(|e| EngineError::SynthesisFailed(format!("text contains null byte: {}", e)))?;
 
@@ -380,6 +400,8 @@ impl Engine {
     where
         F: FnMut(&[f32], usize, bool),
     {
+        // Serialize synthesis — see ENGINE_INIT_MUTEX docs.
+        let _guard = ENGINE_INIT_MUTEX.lock().unwrap();
         let c_text = CString::new(text.as_bytes())
             .map_err(|e| EngineError::SynthesisFailed(format!("text contains null byte: {}", e)))?;
 
@@ -457,6 +479,8 @@ impl Engine {
 impl Drop for Engine {
     fn drop(&mut self) {
         if !self.handle.is_null() {
+            // Serialize Engine destruction — see ENGINE_INIT_MUTEX docs.
+            let _guard = ENGINE_INIT_MUTEX.lock().unwrap();
             unsafe {
                 ffi::tts_bridge_engine_destroy(self.handle);
             }

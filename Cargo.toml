@@ -7,8 +7,9 @@ repository = "https://github.com/addy-47/chatterbox-rs"
 license = "MIT"
 
 [features]
-default = ["server"]
+default = ["server", "cuda"]
 server = ["dep:axum", "dep:tokio", "dep:serde", "dep:serde_json", "dep:futures-util", "dep:tower-http", "dep:tracing"]
+cuda = []
 
 [dependencies]
 libc = "0.2"
