@@ -17,7 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut port = 7860u16;
     let mut gpu_layers = 99i32;
     let mut cfm_steps = 10i32;
-    let mut stream_chunk_tokens = 1i32;
+    let mut stream_chunk_tokens = 16i32;
     let mut language = "en".to_string();
     let mut bind_addr = None;
 
