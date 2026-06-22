@@ -17,16 +17,19 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 use axum::{
     extract::{State, WebSocketUpgrade, ws::Message},
     http::StatusCode,
-    response::{IntoResponse, Json},
+    response::{IntoResponse, Json, Response},
     routing::{get, post},
     Router,
 };
 
 use serde::{Deserialize, Serialize};
+use futures_util::stream::Stream;
 
 use crate::{Engine, EngineError, EngineOptions};
 
@@ -83,6 +86,76 @@ async fn tts_handler(
     drop(engine);
 
     Ok(encode_wav(&result.pcm, result.sample_rate as u32))
+}
+
+async fn tts_stream_pcm_handler(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<TtsRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    if req.text.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "text is required".into(),
+            }),
+        ));
+    }
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<axum::body::Bytes, std::io::Error>>(16);
+
+    // Spawn blocking task to run the engine.
+    tokio::task::spawn_blocking(move || {
+        let engine = state.engine.lock().unwrap();
+        let res = engine.synthesize_streaming(&req.text, |chunk, _chunk_idx, _is_last| {
+            let bytes: Vec<u8> = chunk
+                .iter()
+                .flat_map(|&s| s.to_le_bytes())
+                .collect();
+            // Send chunk to receiver
+            if tx.blocking_send(Ok(axum::body::Bytes::from(bytes))).is_err() {
+                // Receiver was dropped, stop or ignore.
+            }
+        });
+
+        if let Err(e) = res {
+            let err_msg = format!("synthesis failed: {:?}", e);
+            let _ = tx.blocking_send(Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                err_msg,
+            )));
+        }
+    });
+
+    struct ReceiverStream {
+        inner: tokio::sync::mpsc::Receiver<Result<axum::body::Bytes, std::io::Error>>,
+    }
+
+    impl Stream for ReceiverStream {
+        type Item = Result<axum::body::Bytes, std::io::Error>;
+
+        fn poll_next(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+        ) -> Poll<Option<Self::Item>> {
+            self.inner.poll_recv(cx)
+        }
+    }
+
+    let body = axum::body::Body::from_stream(ReceiverStream { inner: rx });
+
+    let response = Response::builder()
+        .header("Content-Type", "audio/pcm-f32le; rate=24000")
+        .body(body)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("failed to build response: {}", e),
+                }),
+            )
+        })?;
+
+    Ok(response)
 }
 
 async fn ws_handler(
@@ -247,6 +320,7 @@ pub async fn run(opts: ServerOptions) -> Result<(), Box<dyn std::error::Error>> 
         .route("/health", get(health_handler))
         .route("/tts", post(tts_handler))
         .route("/tts/stream", get(ws_handler))
+        .route("/tts/stream-pcm", post(tts_stream_pcm_handler))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&opts.bind).await?;
