@@ -36,7 +36,8 @@ use crate::{Engine, EngineError, EngineOptions};
 // ── Shared state ──────────────────────────────────────────────────
 
 struct AppState {
-    engine: Mutex<Engine>,
+    engine: Mutex<Option<Engine>>,
+    default_opts: Mutex<EngineOptions>,
 }
 
 // ─── Request / Response types ─────────────────────────────────────
@@ -47,9 +48,20 @@ struct TtsRequest {
     language: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct LoadRequest {
+    t3_gguf_path: Option<String>,
+    s3gen_gguf_path: Option<String>,
+    language: Option<String>,
+    gpu_layers: Option<i32>,
+    cfm_steps: Option<i32>,
+    stream_chunk_tokens: Option<i32>,
+}
+
 #[derive(Serialize)]
 struct HealthResponse {
     status: &'static str,
+    models_loaded: bool,
 }
 
 #[derive(Serialize)]
@@ -59,10 +71,69 @@ struct ErrorResponse {
 
 // ─── Routes ───────────────────────────────────────────────────────
 
+// ─── Routes ───────────────────────────────────────────────────────
+
 async fn health_handler(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
-    // Verify the mutex is not poisoned.
-    drop(state.engine.lock().unwrap());
-    Json(HealthResponse { status: "ok" })
+    let engine_lock = state.engine.lock().unwrap();
+    let loaded = engine_lock.is_some();
+    Json(HealthResponse {
+        status: "ok",
+        models_loaded: loaded,
+    })
+}
+
+async fn load_models_handler(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LoadRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let mut engine_lock = state.engine.lock().unwrap();
+    
+    // Drop existing engine to free VRAM
+    *engine_lock = None;
+
+    let mut opts = state.default_opts.lock().unwrap().clone();
+    if let Some(p) = req.t3_gguf_path {
+        opts.t3_gguf_path = p;
+    }
+    if let Some(p) = req.s3gen_gguf_path {
+        opts.s3gen_gguf_path = p;
+    }
+    if let Some(l) = req.language {
+        opts.language = l;
+    }
+    if let Some(g) = req.gpu_layers {
+        opts.n_gpu_layers = g;
+    }
+    if let Some(c) = req.cfm_steps {
+        opts.cfm_steps = c;
+        opts.stream_cfm_steps = c;
+    }
+    if let Some(s) = req.stream_chunk_tokens {
+        opts.stream_chunk_tokens = s;
+    }
+
+    match Engine::new(opts) {
+        Ok(engine) => {
+            *engine_lock = Some(engine);
+            Ok(Json(serde_json::json!({ "status": "loaded" })))
+        }
+        Err(e) => {
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("failed to load models: {:?}", e),
+                }),
+            ))
+        }
+    }
+}
+
+async fn unload_models_handler(
+    State(state): State<Arc<AppState>>,
+) -> Json<serde_json::Value> {
+    let mut engine_lock = state.engine.lock().unwrap();
+    *engine_lock = None;
+    Json(serde_json::json!({ "status": "unloaded" }))
 }
 
 async fn tts_handler(
@@ -78,12 +149,25 @@ async fn tts_handler(
         ));
     }
 
-    let engine = state.engine.lock().unwrap();
+    let engine_lock = state.engine.lock().unwrap();
+    let engine = match &*engine_lock {
+        Some(e) => e,
+        None => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "models not loaded; POST to /models/load first".into(),
+                }),
+            ));
+        }
+    };
+
     let result = engine
         .synthesize(&req.text)
         .map_err(|e| map_error(e))?;
-    // Drop the lock before async work.
-    drop(engine);
+    
+    // Explicitly drop before sending bytes
+    drop(engine_lock);
 
     Ok(encode_wav(&result.pcm, result.sample_rate as u32))
 }
@@ -101,11 +185,34 @@ async fn tts_stream_pcm_handler(
         ));
     }
 
+    {
+        let engine_lock = state.engine.lock().unwrap();
+        if engine_lock.is_none() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "models not loaded; POST to /models/load first".into(),
+                }),
+            ));
+        }
+    }
+
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<axum::body::Bytes, std::io::Error>>(16);
 
     // Spawn blocking task to run the engine.
     tokio::task::spawn_blocking(move || {
-        let engine = state.engine.lock().unwrap();
+        let engine_lock = state.engine.lock().unwrap();
+        let engine = match &*engine_lock {
+            Some(e) => e,
+            None => {
+                let _ = tx.blocking_send(Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "models not loaded",
+                )));
+                return;
+            }
+        };
+
         let res = engine.synthesize_streaming(&req.text, |chunk, _chunk_idx, _is_last| {
             let bytes: Vec<u8> = chunk
                 .iter()
@@ -193,8 +300,12 @@ async fn ws_handler(
             // Lock engine, synthesize, release lock, then send.
             // This avoids holding a non-Send MutexGuard across .await.
             let pcm_result = {
-                let engine = state.engine.lock().unwrap();
-                engine.synthesize(&req.text).map(|r| r.pcm)
+                let engine_lock = state.engine.lock().unwrap();
+                if let Some(engine) = &*engine_lock {
+                    engine.synthesize(&req.text).map(|r| r.pcm)
+                } else {
+                    Err(EngineError::LoadFailed("Models not loaded".into()))
+                }
             };
 
             let pcm = match pcm_result {
@@ -310,14 +421,15 @@ impl Default for ServerOptions {
 ///
 /// Returns a [`tokio::task::JoinHandle`] for graceful shutdown.
 pub async fn run(opts: ServerOptions) -> Result<(), Box<dyn std::error::Error>> {
-    let engine = Engine::new(opts.engine)?;
-
     let state = Arc::new(AppState {
-        engine: Mutex::new(engine),
+        engine: Mutex::new(None),
+        default_opts: Mutex::new(opts.engine),
     });
 
     let app = Router::new()
         .route("/health", get(health_handler))
+        .route("/models/load", post(load_models_handler))
+        .route("/models/unload", post(unload_models_handler))
         .route("/tts", post(tts_handler))
         .route("/tts/stream", get(ws_handler))
         .route("/tts/stream-pcm", post(tts_stream_pcm_handler))
