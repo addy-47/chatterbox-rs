@@ -113,7 +113,10 @@ int tts_bridge_engine_synthesize_streaming(
     void * user_data,
     tts_bridge_synthesis_result * out_result,
     char ** out_error);
-
+int tts_bridge_engine_save_voice(
+    tts_bridge_engine * engine,
+    const char * output_dir,
+    char ** out_error);
 // ── Memory management ─────────────────────────────────────────────
 
 void tts_bridge_free_result(tts_bridge_synthesis_result * result);

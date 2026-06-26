@@ -28,7 +28,7 @@ set(TTS_CPP_LIB_SOURCES
     src/t3_mtl.cpp
 )
 
-add_library(mtl_tokenizer STATIC src/mtl_tokenizer.cpp)
+add_library(mtl_tokenizer STATIC src/mtl_tokenizer.cpp src/mtl_lang_preprocess.cpp)
 target_include_directories(mtl_tokenizer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 set_target_properties(mtl_tokenizer PROPERTIES POSITION_INDEPENDENT_CODE ON)
 

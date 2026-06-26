@@ -94,6 +94,12 @@ extern "C" {
         out_error: *mut *mut c_char,
     ) -> c_int;
 
+    pub fn tts_bridge_engine_save_voice(
+        engine: *mut tts_bridge_engine,
+        output_dir: *const c_char,
+        out_error: *mut *mut c_char,
+    ) -> c_int;
+
     pub fn tts_bridge_free_result(result: *mut tts_bridge_synthesis_result);
 
     pub fn tts_bridge_free_string(s: *mut c_char);

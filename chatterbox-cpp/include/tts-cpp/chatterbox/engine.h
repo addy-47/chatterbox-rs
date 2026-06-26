@@ -203,6 +203,10 @@ public:
     // callers that want to introspect the resolved n_gpu_layers / n_ctx).
     const EngineOptions & options() const;
 
+    // Save the computed/loaded voice tensors to the specified directory.
+    // Throws std::runtime_error on failure.
+    void save_voice(const std::string & output_dir) const;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> pimpl_;

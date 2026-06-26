@@ -625,6 +625,38 @@ struct Engine::Impl {
     SynthesisResult synthesize(const std::string & text) {
         return synthesize(text, StreamCallback{});
     }
+
+    void save_voice(const std::string & output_dir) const {
+        if (!voice_overridden) {
+            throw std::runtime_error("save_voice: no custom voice loaded/computed in this engine");
+        }
+        std::filesystem::create_directory(output_dir);
+
+        // Fetch speaker_emb
+        std::vector<float> se_data(ggml_nelements(model.builtin_speaker_emb));
+        ggml_backend_tensor_get(model.builtin_speaker_emb, se_data.data(), 0, ggml_nbytes(model.builtin_speaker_emb));
+        npy_save_f32(output_dir + "/speaker_emb.npy", {(int64_t)se_data.size()}, se_data.data());
+
+        // Fetch cond_prompt_speech_tokens
+        std::vector<int32_t> ct_data(ggml_nelements(model.builtin_cond_prompt_tokens));
+        ggml_backend_tensor_get(model.builtin_cond_prompt_tokens, ct_data.data(), 0, ggml_nbytes(model.builtin_cond_prompt_tokens));
+        npy_save_i32(output_dir + "/cond_prompt_speech_tokens.npy", {(int64_t)ct_data.size()}, ct_data.data());
+
+        // Save S3Gen embedding
+        if (!s3gen_embedding.empty()) {
+            npy_save_f32(output_dir + "/embedding.npy", {(int64_t)s3gen_embedding.size()}, s3gen_embedding.data());
+        }
+
+        // Save S3Gen prompt_token
+        if (!s3gen_prompt_token.empty()) {
+            npy_save_i32(output_dir + "/prompt_token.npy", {(int64_t)s3gen_prompt_token.size()}, s3gen_prompt_token.data());
+        }
+
+        // Save S3Gen prompt_feat
+        if (!s3gen_prompt_feat.empty() && s3gen_prompt_feat_rows > 0) {
+            npy_save_f32(output_dir + "/prompt_feat.npy", {(int64_t)s3gen_prompt_feat_rows, 80}, s3gen_prompt_feat.data());
+        }
+    }
 };
 
 Engine::Engine(const EngineOptions & opts)
@@ -632,7 +664,7 @@ Engine::Engine(const EngineOptions & opts)
 
 Engine::~Engine() = default;
 Engine::Engine(Engine &&) noexcept            = default;
-Engine & Engine::operator=(Engine &&) noexcept = default;
+Engine& Engine::operator=(Engine &&) noexcept = default;
 
 SynthesisResult Engine::synthesize(const std::string & text) {
     return pimpl_->synthesize(text);
@@ -649,6 +681,10 @@ void Engine::cancel() {
 
 const EngineOptions & Engine::options() const {
     return pimpl_->opts;
+}
+
+void Engine::save_voice(const std::string & output_dir) const {
+    pimpl_->save_voice(output_dir);
 }
 
 } // namespace tts_cpp::chatterbox

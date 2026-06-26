@@ -469,9 +469,36 @@ impl Engine {
         // A future enhancement would expose tts_bridge_engine_cancel().
     }
 
+    /// Save the voice clone tensors to the specified directory path.
+    pub fn save_voice<P: AsRef<Path>>(&self, output_dir: P) -> Result<(), EngineError> {
+        let path_str = output_dir.as_ref().to_string_lossy().into_owned();
+        let c_output_dir = CString::new(path_str.as_bytes())
+            .map_err(|e| EngineError::SynthesisFailed(format!("output_dir contains null byte: {}", e)))?;
+
+        let _guard = ENGINE_INIT_MUTEX.lock().unwrap();
+        let mut out_error: *mut libc::c_char = ptr::null_mut();
+
+        let rc = unsafe {
+            ffi::tts_bridge_engine_save_voice(self.handle, c_output_dir.as_ptr(), &mut out_error)
+        };
+
+        if rc != 0 {
+            let err = if !out_error.is_null() {
+                let msg = unsafe { CStr::from_ptr(out_error).to_string_lossy().into_owned() };
+                unsafe { ffi::tts_bridge_free_string(out_error) };
+                msg
+            } else {
+                "unknown save_voice error".into()
+            };
+            return Err(EngineError::SynthesisFailed(err));
+        }
+
+        Ok(())
+    }
+
     /// Return a reference to the handle (for low-level FFI use).
     #[doc(hidden)]
-    pub fn as_raw(&self) -> *mut tts_bridge_engine {
+    pub fn as_raw(&self) -> *mut ffi::tts_bridge_engine {
         self.handle
     }
 }

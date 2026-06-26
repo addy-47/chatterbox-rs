@@ -184,6 +184,25 @@ int tts_bridge_engine_synthesize_streaming(
     }
 }
 
+int tts_bridge_engine_save_voice(
+    tts_bridge_engine * engine,
+    const char * output_dir,
+    char ** out_error)
+{
+    if (!engine || !output_dir) {
+        if (out_error) *out_error = dup_error(std::runtime_error("NULL argument"));
+        return -1;
+    }
+    try {
+        auto * e = reinterpret_cast<cb::Engine *>(engine);
+        e->save_voice(output_dir);
+        return 0;
+    } catch (const std::exception & e) {
+        if (out_error) *out_error = dup_error(e);
+        return -1;
+    }
+}
+
 // ── Memory management ─────────────────────────────────────────────
 
 void tts_bridge_free_result(tts_bridge_synthesis_result * result) {

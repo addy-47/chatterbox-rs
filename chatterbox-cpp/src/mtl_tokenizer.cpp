@@ -1,4 +1,5 @@
 #include "mtl_tokenizer.h"
+#include "mtl_lang_preprocess.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -445,7 +446,8 @@ struct json_parser {
 // local-static initialisation.
 const std::vector<std::string> & mtl_tokenizer::supported_languages() {
     static const std::vector<std::string> k_supported = {
-        "en","es","fr","de","it","pt","nl","pl","tr","sv","da","fi","no","el","ms","sw","ar","ko"
+        "en","es","fr","de","it","pt","nl","pl","tr","sv","da","fi","no","el","ms","sw","ar","ko",
+        "ja","he","ru","zh","hi"
     };
     return k_supported;
 }
@@ -642,17 +644,12 @@ std::vector<int32_t> mtl_tokenizer::encode(const std::string & text,
     std::string txt = text;
 
     if (!language_id.empty()) {
-        if (language_id == "ja" || language_id == "he" || language_id == "ru" ||
-            language_id == "zh" || language_id == "hi") {
-            throw std::runtime_error(
-                "mtl_tokenizer: language '" + language_id + "' requires preprocessing not "
-                "included in this build (pykakasi / dicta / russian_text_stresser / "
-                "Cangjie mapping). Pre-process the text externally before passing it in.");
-        }
         if (!is_language_supported(language_id)) {
             throw std::runtime_error("mtl_tokenizer: unsupported language '" + language_id + "'");
         }
+        txt = preprocess_for_language(txt, language_id);
     }
+
 
     txt = utf8_lowercase(txt);
     txt = nfkd_normalize(txt);
