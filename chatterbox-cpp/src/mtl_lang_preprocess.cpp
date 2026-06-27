@@ -168,9 +168,21 @@ std::string devanagari_to_roman(const std::string& text) {
                 }
             }
             if (!has_vowel_modifier) {
-                out += "a"; // inherent vowel
+                // Word-final schwa deletion: do not append inherent "a" at the end of a word
+                bool is_end_of_word = true;
+                if (i + 1 < cps.size()) {
+                    uint32_t next = cps[i + 1];
+                    // If next codepoint is within the Devanagari block, it's not the end of the word
+                    if ((next >= 0x0900 && next <= 0x094F) || (next >= 0x0958 && next <= 0x097F)) {
+                        is_end_of_word = false;
+                    }
+                }
+                if (!is_end_of_word) {
+                    out += "a";
+                }
             }
             continue;
+
         }
 
         // Marks
