@@ -13,6 +13,17 @@ fn has_cuda() -> bool {
     false
 }
 
+/// Emit `cargo:rustc-link-search=native=<dir>` for every directory in `candidates`
+/// that actually exists. This avoids spurious "no such directory" linker warnings
+/// on generators / platforms that use only a subset of these layouts.
+fn emit_link_search(candidates: &[PathBuf]) {
+    for dir in candidates {
+        if dir.exists() {
+            println!("cargo:rustc-link-search=native={}", dir.display());
+        }
+    }
+}
+
 fn main() {
     // Path to the vendored chatterbox-cpp source.
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
@@ -49,8 +60,13 @@ fn main() {
 
     let dst = cmake_cfg.build();
 
-    // The build output directory.
+    // The build output directory (cmake crate's `dst` equals the OUT_DIR for this crate).
     let build_dir = dst.join("build");
+
+    // On Windows, MSVC multi-config generators (Visual Studio) place compiled
+    // static libraries in `<build>/Release/` instead of directly in `<build>/`.
+    // We register both so the same build.rs works on Linux, macOS, and Windows.
+    let build_dir_release = build_dir.join("Release");
 
     // ── Step 2: Compile the C bridge with the `cc` crate ──
     //
@@ -75,55 +91,65 @@ fn main() {
 
     // ── Step 3: Link paths ──
     //
-    // Point the linker at the directories containing libtts-cpp.a and the
-    // GGML static archives.
+    // Point the linker at the directories containing libtts-cpp.a/.lib and the
+    // GGML static archives. We register both flat (Unix Makefile) and
+    // Release-subdirectory (Windows MSVC multi-config) layouts.
 
-    // tts-cpp library
-    println!("cargo:rustc-link-search=native={}", build_dir.display());
+    // tts-cpp library — flat layout (Linux/macOS) and MSVC Release sub-dir (Windows).
+    emit_link_search(&[build_dir.clone(), build_dir_release.clone()]);
     println!("cargo:rustc-link-lib=static=tts-cpp");
 
-    // mtl_tokenizer — compiled as a separate static library by cmake
+    // mtl_tokenizer — compiled as a separate static library by cmake.
+    // Also resides in `Release/` on MSVC generators.
     println!("cargo:rustc-link-lib=static=mtl_tokenizer");
 
-    // GGML libraries — the cmake build put them in a flat build tree.
-    let ggml_build_dir = build_dir.join("ggml/src");
-    // Fallback for some cmake generators that use a deeper layout.
-    let ggml_build_dir_alt = build_dir.join("_deps/ggml-build/src");
+    // ── GGML libraries ──
+    //
+    // The cmake build places them in different sub-trees depending on the
+    // generator and how ggml is configured:
+    //
+    // Unix Makefile (Linux/macOS):
+    //   build/ggml/src/                  (flat)
+    //   build/ggml/src/ggml-cpu/         (ggml-cpu sub-library)
+    //
+    // Visual Studio (Windows):
+    //   build/ggml/src/Release/          (multi-config top)
+    //   build/ggml/src/ggml-cpu/Release/ (ggml-cpu sub-library)
+    //   build/Release/                   (some generators flatten everything here)
+    //
+    // FetchContent fallback (some cmake setups):
+    //   build/_deps/ggml-build/src/
 
-    for dir in &[&ggml_build_dir, &ggml_build_dir_alt] {
-        if dir.join("libggml.a").exists() || dir.join("ggml.lib").exists() {
-            println!("cargo:rustc-link-search=native={}", dir.display());
-        }
-    }
+    let ggml_src = build_dir.join("ggml/src");
+    let ggml_src_release = ggml_src.join("Release");
+    let ggml_cpu_dir = ggml_src.join("ggml-cpu");
+    let ggml_cpu_release = ggml_cpu_dir.join("Release");
+    let ggml_deps_src = build_dir.join("_deps/ggml-build/src");
+    let ggml_deps_src_release = ggml_deps_src.join("Release");
 
-    // Find libggml*.a in the build tree.
+    emit_link_search(&[
+        ggml_src.clone(),
+        ggml_src_release.clone(),
+        ggml_cpu_dir.clone(),
+        ggml_cpu_release.clone(),
+        ggml_deps_src.clone(),
+        ggml_deps_src_release.clone(),
+    ]);
+
     println!("cargo:rustc-link-lib=static=ggml");
     println!("cargo:rustc-link-lib=static=ggml-base");
-
-    let cpu_lib = ggml_build_dir.join("ggml-cpu/libggml-cpu.a");
-    let cpu_lib_alt = ggml_build_dir.join("libggml-cpu.a");
-    if cpu_lib.exists() {
-        println!("cargo:rustc-link-search=native={}", ggml_build_dir.join("ggml-cpu").display());
-    } else if cpu_lib_alt.exists() {
-        // Already in ggml_build_dir.
-    }
     println!("cargo:rustc-link-lib=static=ggml-cpu");
 
     if use_cuda {
-        let cuda_dir = ggml_build_dir.join("ggml-cuda");
-        let cuda_dir_alt = build_dir.join("ggml/src/ggml-cuda"); // different generator layout
-        for dir in &[&cuda_dir, &cuda_dir_alt] {
-            if dir.join("libggml-cuda.a").exists() || dir.join("ggml-cuda.lib").exists() {
-                println!("cargo:rustc-link-search=native={}", dir.display());
-            }
-        }
+        let cuda_dir = ggml_src.join("ggml-cuda");
+        let cuda_dir_release = cuda_dir.join("Release");
+        emit_link_search(&[cuda_dir, cuda_dir_release]);
         println!("cargo:rustc-link-lib=static=ggml-cuda");
 
         // CUDA runtime libraries.
         let cuda_lib_dir = PathBuf::from("/usr/local/cuda/lib64");
         let cuda_stubs_dir = cuda_lib_dir.join("stubs");
-        println!("cargo:rustc-link-search=native={}", cuda_lib_dir.display());
-        println!("cargo:rustc-link-search=native={}", cuda_stubs_dir.display());
+        emit_link_search(&[cuda_lib_dir, cuda_stubs_dir]);
         println!("cargo:rustc-link-lib=dylib=cudart");
         println!("cargo:rustc-link-lib=dylib=cublas");
         println!("cargo:rustc-link-lib=dylib=cuda");
