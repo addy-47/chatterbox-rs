@@ -58,6 +58,45 @@ fn main() {
     // Disable OpenMP to prevent linker errors and runtime thread contention with Vox's OpenMP runtime.
     cmake_cfg.define("GGML_OPENMP", "OFF");
 
+    // ── Android (aarch64) toolchain ──
+    //
+    // Without a CMAKE_TOOLCHAIN_FILE, CMake resolves the cross-compile target on
+    // its own and `ggml_get_system_arch()` (ggml/cmake/common.cmake) sees the
+    // HOST processor instead of the target. It then selects its x86 backend:
+    //
+    //   -- CMAKE_SYSTEM_PROCESSOR: x86_64
+    //   -- x86 detected
+    //   -- Adding CPU backend variant ggml-cpu: -march=native
+    //   clang: error: unsupported argument 'native' to option '-march='
+    //
+    // Passing `-DCMAKE_SYSTEM_PROCESSOR=aarch64` alone does NOT help: CMake
+    // recomputes that variable inside `project()` and shadows the cache entry.
+    // Only the NDK toolchain file sets it early enough to be authoritative.
+    //
+    // Mirrors llama-cpp-sys-4/build.rs:1885-1901 so both ggml builds agree.
+    let target = std::env::var("TARGET").unwrap_or_default();
+    if target.contains("android") && target.contains("aarch64") {
+        let android_ndk = std::env::var("ANDROID_NDK").expect(
+            "Android target requires the NDK: set ANDROID_NDK (e.g. \
+             ~/Android/Sdk/ndk/29.0.13846066)",
+        );
+        cmake_cfg
+            .define(
+                "CMAKE_TOOLCHAIN_FILE",
+                format!("{android_ndk}/build/cmake/android.toolchain.cmake"),
+            )
+            .define("ANDROID_ABI", "arm64-v8a")
+            // Defaults to android-24 (Vox's minSdk); override to match your app.
+            .define(
+                "ANDROID_PLATFORM",
+                std::env::var("ANDROID_PLATFORM").unwrap_or_else(|_| "android-24".to_owned()),
+            )
+            .define("CMAKE_SYSTEM_PROCESSOR", "arm64")
+            .define("CMAKE_C_FLAGS", "-march=armv8.7a")
+            .define("CMAKE_CXX_FLAGS", "-march=armv8.7a");
+        println!("cargo:rerun-if-env-changed=ANDROID_NDK");
+    }
+
     let dst = cmake_cfg.build();
 
     // The build output directory (cmake crate's `dst` equals the OUT_DIR for this crate).
